@@ -16,7 +16,7 @@ Download the latest release of the Add-on from https://github.com/Ettenmure/dcs-
 
 In Blender, on the top left of the screen go to Edit > Preferences.
 
-Open the Add-ons menu and click "Install", locate the previously downloaded "uv_dcs_uv_converter.zip" and click "Install Add-on".
+Open the Add-ons menu and click "Install", locate the previously downloaded "DCSUVConverter.zip" and click "Install Add-on".
 
 Next, click on the checkbox to the left of the Add-on name to active it. Exit Blender.
 
