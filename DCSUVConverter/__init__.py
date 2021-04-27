@@ -1,7 +1,7 @@
 bl_info = {
     "name": "DCS UV Converter",
     "author": "Ettenmure",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (2, 92, 0),
     "location": "Scene Properties",
     "description": "Converts UV maps generated on ModelViewer 2 to an image format",
@@ -10,42 +10,92 @@ bl_info = {
     "category": "UV",
 }
 
+# TODO: 
+# Fix self report not working.
+# Change from bpy.ops to bmesh.
+# Follow Blender API best practices.
+
 import bpy
 import os
 import csv
 import bmesh
 import mathutils
 
-from bpy.props import StringProperty, BoolProperty
+from bpy.props import (StringProperty,
+                       BoolProperty,
+                       IntProperty,
+                       FloatProperty,
+                       FloatVectorProperty,
+                       EnumProperty,
+                       PointerProperty,
+                       )
+from bpy.types import (Panel,
+                       Operator,
+                       AddonPreferences,
+                       PropertyGroup,
+                       )
 from bpy_extras.io_utils import ImportHelper
-from bpy.types import Operator
 
 
-#TODO: Separate it into modules.
-
-class DUCConvertCSV(Operator, ImportHelper):
-    """Select the .csv file to convert"""      # Use this as a tooltip for menu items and buttons.
-    bl_idname = "object.duccsvimport"        # Unique identifier for buttons and menu items to reference.
+# Runs the conversion when the button is pressed.
+class DUCMain(Operator):
+    """Begins the conversion process"""      # Use this as a tooltip for menu items and buttons.
+    bl_idname = "object.duc_main"        # Unique identifier for buttons and menu items to reference.
     bl_label = "Convert .csv"         # Display name in the interface.
+    
+    def execute(self, context):
+        
+        try: # Sets it to object mode.
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except:
+            pass
+        
+        # Deletes objects on the scene. Has to be inside execute or it will cause a failure to activate the Add-on.
+        bpy.ops.object.select_all(action='SELECT')
+        bpy.ops.object.delete(use_global=False)
+        
+        bpy.ops.object.duc_import_csv('INVOKE_DEFAULT') # Moves to the next step, importing.
+        
+        return {'FINISHED'}
+
+
+# Imports the data from the .csv file
+class DUCImportCSV(Operator, ImportHelper):
+    """Imports the data"""
+    bl_idname = "object.duc_import_csv"
+    bl_label = "Import .csv"
     
     filter_glob: StringProperty(
         default='*.csv', # Restricts the selectable file type to .csv only.
         options={'HIDDEN'}
     )
+    
     def execute(self, context):
-        
-        # Deletes objects on the scene.
-        bpy.ops.object.select_all(action='SELECT')
-        bpy.ops.object.delete(use_global=False)
-        
-        # Imports the data from the csv file and saves it in "data".
-        data = []
+        RawData = []
+        # Imports the data from the .csv file and saves it in "RawData".
         with open(self.filepath) as f:
             reader = csv.reader(f)
             for row in reader:
-                data.append(row)
+                RawData.append(row)
         
-        # Saves the size of the image.
+        bpy.context.scene["RawData"] = RawData # Saves it to the scene so that the next class can use it.
+        bpy.context.scene["DUCFilePath"] = self.filepath
+        
+        #bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.duc_treat_csv('INVOKE_DEFAULT') # Moves to the next step, treating the raw data.
+
+        return {'FINISHED'} 
+
+
+# Generates "vertices" and "faces" (vertex index list) from "RawData".
+class DUCTreatCSV(Operator):
+    """Treats the data"""
+    bl_idname = "object.duc_treat_csv"
+    bl_label = "Treat .csv"
+    
+    def execute(self, context):
+        data = bpy.context.scene["RawData"]
+        # Saves the size of the original image.
         hsize = float(data[1][0]) # Horizontal size of the texture
         vsize = float(data[1][1]) # Vertical size of the texture
         
@@ -79,6 +129,26 @@ class DUCConvertCSV(Operator, ImportHelper):
             faces[j] = (k,k+1,k+2)
             j +=1
             k +=3
+        
+        bpy.context.scene["GenVertices"] = vertices # Saves it to the scene so that the other classes can use it.
+        bpy.context.scene["GenFaces"] = faces
+        bpy.context.scene["hsize"] = hsize
+        bpy.context.scene["vsize"] = vsize
+        
+        bpy.ops.object.duc_mesh('INVOKE_DEFAULT') # Moves to the next step, generating the mesh.
+        
+        return {'FINISHED'}
+
+# Creates a mesh from variables "vertices" and "faces".
+class DUCMesh(Operator):
+    """Generates the mesh"""
+    bl_idname = "object.duc_mesh"
+    bl_label = "Convert .csv"
+    
+    def execute(self, context):
+        
+        vertices = bpy.context.scene["GenVertices"]
+        faces = bpy.context.scene["GenFaces"]
         
         # Creates the mesh from variables "vertices" and "faces".
         edges = []
@@ -165,7 +235,19 @@ class DUCConvertCSV(Operator, ImportHelper):
         
         bpy.ops.mesh.select_all(action='SELECT')
         
-        # Unwraps the mesh.
+        bpy.ops.object.duc_unwrap('INVOKE_DEFAULT') # Moves to the next step, unmwraping the mesh.
+        
+        return {'FINISHED'} 
+
+
+# Unwraps the mesh.  
+class DUCUnwrap(Operator):
+    """Unwraps the mesh"""
+    bl_idname = "object.duc_unwrap"
+    bl_label = "Main"
+    
+    def execute(self, context):
+        
         obj = context.active_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
@@ -188,22 +270,63 @@ class DUCConvertCSV(Operator, ImportHelper):
 
         for loop in ob.data.loops :
             ob.data.uv_layers.active.data[loop.index].uv = ob.data.uv_layers.active.data[loop.index].uv + travec
-            
+        
+        bpy.ops.object.duc_export('INVOKE_DEFAULT') # Moves to the next step, exporting the UV map.
+        
+        return {'FINISHED'}
+
+# Exports the UV map.  
+class DUCExport(Operator):
+    """Exports the UV map"""
+    bl_idname = "object.duc_export"
+    bl_label = "Main"
+        
+    def execute(self, context):
+        
+        TextureScale = 1
+        ChechboxState = context.scene.my_tool.my_bool # State of the checkbox
+        
+        if (ChechboxState == True): # Doubles the texture size if the checkbox is activated.
+            TextureScale = 2
+        else:
+            pass
+        
+        hsize = int(bpy.context.scene["hsize"]) * TextureScale
+        vsize = int(bpy.context.scene["vsize"]) * TextureScale
+                
         # Exports the texture on the same folder as the .csv file.
-        expfilepath = self.filepath # Gets the filepath of the .csv file.
+        expfilepath = bpy.context.scene["DUCFilePath"] # Gets the filepath of the .csv file.
         expfilepath = expfilepath[:-4] # Removes the last four characters (.csv).
         expfilepath = expfilepath + '_UV' # Adds _UV to the file name.
-        bpy.ops.uv.export_layout(filepath=expfilepath, export_all=True, mode='PNG', size=(int(hsize), int(vsize)))
+
+        bpy.ops.uv.export_layout(filepath=expfilepath, export_all=True, mode='PNG', size=(hsize, vsize))
         
         # Deletes the mesh.
         bpy.ops.object.delete(use_global=False)
         
-        self.report({'INFO'}, "UV Conversion finished.")
+        # Removes data so that the .blend file doesn't balloon in size.
+        bpy.context.scene["RawData"] = [(0,0,0)]
+        bpy.context.scene["GenVertices"] = [(0,0,0)]
+        bpy.context.scene["GenFaces"] = [(0,0,0)]
+        bpy.context.scene["DUCFilePath"] = [(0,0,0)]
+        bpy.context.scene["hsize"] = [(0,0,0)]
+        bpy.context.scene["vsize"] = [(0,0,0)]
         
-        return {'FINISHED'} 
-    
+        #self.report({'INFO'}, 'UV Conversion finished.') Commented out, not working.
+        
+        return {'FINISHED'}
 
-class LayoutDUCButtons(bpy.types.Panel):
+# Stores properties in the active scene.
+class MySettings(PropertyGroup):
+
+    my_bool : BoolProperty(
+        name="Enable or Disable",
+        description="Warning: Slows conversion",
+        default = False
+        )
+
+# Adds the UI.
+class LayoutDUCButtons(Panel):
     """Creates a Panel in the scene context of the properties editor"""
     bl_label = "DCS UV Converter"
     bl_idname = "SCENE_PT_layout"
@@ -213,26 +336,43 @@ class LayoutDUCButtons(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-
         scene = context.scene
-
+        mytool = scene.my_tool
+        
         # Convert button.
         layout.label(text="Select the .csv file to convert")
         row = layout.row()
         row.scale_y = 2.0
-        row.operator("object.duccsvimport")
+        row.operator("object.duc_main")
         
+        # x2 texture size checkbox.
+        layout.prop(mytool, "my_bool", text="Double texture size (Slower)")
         
+# Registers all of the classes.
+classes = (
+    DUCMain,
+    DUCImportCSV,
+    DUCTreatCSV,
+    DUCMesh,
+    DUCUnwrap,
+    DUCExport,
+    LayoutDUCButtons,
+    MySettings,
+)
         
 def register():
-    bpy.utils.register_class(DUCConvertCSV)
-    bpy.utils.register_class(LayoutDUCButtons)
+    from bpy.utils import register_class
+    for cls in classes:
+        register_class(cls)
 
+    bpy.types.Scene.my_tool = PointerProperty(type=MySettings)
 
 def unregister():
-    bpy.utils.unregister_class(DUCConvertCSV)
-    bpy.utils.unregister_class(LayoutDUCButtons)
-
+    from bpy.utils import unregister_class
+    for cls in reversed(classes):
+        unregister_class(cls)
+    
+    del bpy.types.Scene.my_tool
 
 # This allows you to run the script directly from Blender's Text editor
 # to test the add-on without having to install it.
