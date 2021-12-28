@@ -1,8 +1,8 @@
 bl_info = {
     "name": "DCS UV Converter",
     "author": "Ettenmure",
-    "version": (0, 2, 0),
-    "blender": (2, 92, 0),
+    "version": (0, 3, 0),
+    "blender": (2, 93, 0),
     "location": "Scene Properties",
     "description": "Converts UV maps generated on ModelViewer 2 to an image format",
     "warning": "",
@@ -10,16 +10,13 @@ bl_info = {
     "category": "UV",
 }
 
-# TODO: 
-# Fix self report not working.
-# Change from bpy.ops to bmesh.
-# Follow Blender API best practices.
-
 import bpy
 import os
 import csv
 import bmesh
 import mathutils
+
+import time
 
 from bpy.props import (StringProperty,
                        BoolProperty,
@@ -50,7 +47,6 @@ class DUCMain(Operator):
         except:
             pass
         
-        # Deletes objects on the scene. Has to be inside execute or it will cause a failure to activate the Add-on.
         bpy.ops.object.select_all(action='SELECT')
         bpy.ops.object.delete(use_global=False)
         
@@ -70,7 +66,11 @@ class DUCImportCSV(Operator, ImportHelper):
         options={'HIDDEN'}
     )
     
+    
     def execute(self, context):
+        
+        time_start = time.time()
+        
         RawData = []
         # Imports the data from the .csv file and saves it in "RawData".
         with open(self.filepath) as f:
@@ -81,7 +81,12 @@ class DUCImportCSV(Operator, ImportHelper):
         bpy.context.scene["RawData"] = RawData # Saves it to the scene so that the next class can use it.
         bpy.context.scene["DUCFilePath"] = self.filepath
         
-        #bpy.ops.object.mode_set(mode='OBJECT')
+        t1 = time.time() - time_start
+#        print("---------------START---------------")
+#        print("DUCImportCSV finished in %.4f sec" % (t1))
+        
+        bpy.context.scene["t1"] = t1
+        
         bpy.ops.object.duc_treat_csv('INVOKE_DEFAULT') # Moves to the next step, treating the raw data.
 
         return {'FINISHED'} 
@@ -94,10 +99,13 @@ class DUCTreatCSV(Operator):
     bl_label = "Treat .csv"
     
     def execute(self, context):
+        
+        time_start = time.time()
+        
         data = bpy.context.scene["RawData"]
         # Saves the size of the original image.
-        hsize = float(data[1][0]) # Horizontal size of the texture
-        vsize = float(data[1][1]) # Vertical size of the texture
+        hsize = float(data[1][0]) # Horizontal size of the texture.
+        vsize = float(data[1][1]) # Vertical size of the texture.
         
         # Deletes the first two lines, they are no longer needed since they are not geometry.
         del data[0]
@@ -122,7 +130,7 @@ class DUCTreatCSV(Operator):
         
         # Generates "faces", the vertex index list, that is a companion to "vertices".
         facesnumber = int(listlength/3) # The number of faces on the UV map is a third of the modified "data" list.
-        faces = [(0,0,0)] * facesnumber # Generates and empty list the length of facesnumber.
+        faces = [(0,0,0)] * facesnumber # Generates an empty list the length of facesnumber.
         j = 0
         k = 0
         while j < facesnumber: # Populates "faces" with consecutive numbers.
@@ -135,6 +143,11 @@ class DUCTreatCSV(Operator):
         bpy.context.scene["hsize"] = hsize
         bpy.context.scene["vsize"] = vsize
         
+        t2 = time.time() - time_start
+#        print("DUCTreatCSV  finished in %.4f sec" % (t2))
+        
+        bpy.context.scene["t2"] = t2
+        
         bpy.ops.object.duc_mesh('INVOKE_DEFAULT') # Moves to the next step, generating the mesh.
         
         return {'FINISHED'}
@@ -146,6 +159,8 @@ class DUCMesh(Operator):
     bl_label = "Convert .csv"
     
     def execute(self, context):
+        
+        time_start = time.time()
         
         vertices = bpy.context.scene["GenVertices"]
         faces = bpy.context.scene["GenFaces"]
@@ -167,12 +182,9 @@ class DUCMesh(Operator):
         
         # Removes duplicate vertices.
         bpy.ops.object.mode_set(mode = 'EDIT')
-        bpy.ops.mesh.select_all(action='SELECT')
-        bpy.ops.mesh.remove_doubles()
+        bm=bmesh.from_edit_mesh(bpy.context.active_object.data) 
+        bmesh.ops.remove_doubles(bm, verts = bm.verts, dist = 0.00001)
         bpy.ops.object.mode_set(mode = 'OBJECT')
-        
-        # Stores the index of the last vertex of the merged mesh.
-        lastindex = faces[-1][2]
         
         # Adds a plane, used for trimming the excess mesh that falls outside of the texture bounds.
         bpy.ops.mesh.primitive_plane_add(size=1, enter_editmode=False, align='WORLD', location=(0.5, 0.5, 0), scale=(1, 1, 1))
@@ -186,56 +198,41 @@ class DUCMesh(Operator):
         bpy.ops.object.mode_set(mode = 'EDIT')
         
         # Cuts through the texture bounds.
-        bpy.ops.mesh.select_all(action='SELECT') #Selects every face
-        bpy.ops.mesh.bisect(plane_co=(0, 0, 0), plane_no=(1, 0, 0), flip=False) #Left edge
-        bpy.ops.mesh.select_all(action='SELECT') #Selects every face
-        bpy.ops.mesh.bisect(plane_co=(1, 0, 0), plane_no=(1, 0, 0), flip=False) #Right edge
-        bpy.ops.mesh.select_all(action='SELECT') #Selects every face
-        bpy.ops.mesh.bisect(plane_co=(0, 1, 0), plane_no=(0, 1, 0), flip=False) #Top edge
-        bpy.ops.mesh.select_all(action='SELECT') #Selects every face
-        bpy.ops.mesh.bisect(plane_co=(0, 0, 0), plane_no=(0, 1, 0), flip=False) #Bottom edge
+        # Each pair of coordinates from the arrays corresponds to one edge. (Left, Right, Top, Bottom)
+        pco_array = [(0,0,0),(1,0,0),(0,1,0),(0,0,0)]
+        pno_array = [(1,0,0),(1,0,0),(0,1,0),(0,1,0)]
+        w = 0
+        while w < 4: # Cuts the mesh along all four edges.
+            bpy.ops.mesh.select_all(action='SELECT') # Selects every face
+            bpy.ops.mesh.bisect(plane_co=pco_array[w], plane_no=pno_array[w], flip=False)  
+            w +=1      
+        
         bpy.ops.mesh.select_all(action = 'DESELECT')
         
         # Deletes every vertex outside the texture bounds.
-        #Bottom
-        bm=bmesh.from_edit_mesh(bpy.context.active_object.data)
-        bm.verts.ensure_lookup_table()
-        bm.select_history.add(bm.verts[0])
-        bpy.ops.mesh.select_axis(orientation='GLOBAL', sign='POS', axis='Y', threshold=0.0001)
-        bpy.context.tool_settings.mesh_select_mode = (True, False, False)
-        bpy.ops.mesh.select_all(action='INVERT')
-        bpy.ops.mesh.delete(type='VERT')
-        
-        #Top
-        #bm=bmesh.from_edit_mesh(bpy.context.active_object.data)
-        bm.verts.ensure_lookup_table()
-        bm.select_history.add(bm.verts[3])
-        bpy.ops.mesh.select_axis(orientation='GLOBAL', sign='NEG', axis='Y', threshold=0.0001)
-        bpy.context.tool_settings.mesh_select_mode = (True, False, False)
-        bpy.ops.mesh.select_all(action='INVERT')
-        bpy.ops.mesh.delete(type='VERT')
-        
-        #Left
-        #bm=bmesh.from_edit_mesh(bpy.context.active_object.data)
-        bm.verts.ensure_lookup_table()
-        bm.select_history.add(bm.verts[0])
-        bpy.ops.mesh.select_axis(orientation='GLOBAL', sign='POS', axis='X', threshold=0.0001)
-        bpy.context.tool_settings.mesh_select_mode = (True, False, False)
-        bpy.ops.mesh.select_all(action='INVERT')
-        bpy.ops.mesh.delete(type='VERT')
-        
-        #Right
-        #bm=bmesh.from_edit_mesh(bpy.context.active_object.data)
-        bm.verts.ensure_lookup_table()
-        bm.select_history.add(bm.verts[1])
-        bpy.ops.mesh.select_axis(orientation='GLOBAL', sign='NEG', axis='X', threshold=0.0001)
-        bpy.context.tool_settings.mesh_select_mode = (True, False, False)
-        bpy.ops.mesh.select_all(action='INVERT')
-        bpy.ops.mesh.delete(type='VERT')
+        # Each triplet of values from the arrays corresponds to the outside of one edge. (Left, Right, Top, Bottom)
+        bmv_array = [0,1,3,0]
+        sign_array = ['POS','NEG','NEG','POS']
+        axis_array = ['X','X','Y','Y']
+        x = 0
+        while x < 4:
+            bm=bmesh.from_edit_mesh(bpy.context.active_object.data)
+            bm.verts.ensure_lookup_table()
+            bm.select_history.add(bm.verts[bmv_array[x]])
+            bpy.ops.mesh.select_axis(orientation='GLOBAL', sign=sign_array[x], axis=axis_array[x], threshold=0.0001)
+            bpy.context.tool_settings.mesh_select_mode = (True, False, False)
+            bpy.ops.mesh.select_all(action='INVERT')
+            bpy.ops.mesh.delete(type='VERT')
+            x +=1
         
         bpy.ops.mesh.select_all(action='SELECT')
         
-        bpy.ops.object.duc_unwrap('INVOKE_DEFAULT') # Moves to the next step, unmwraping the mesh.
+        t3 = time.time() - time_start
+#        print("DUCMesh      finished in %.4f sec" % (t3))
+        
+        bpy.context.scene["t3"] = t3
+        
+        bpy.ops.object.duc_unwrap('INVOKE_DEFAULT') # Moves to the next step, unwrapping the mesh.
         
         return {'FINISHED'} 
 
@@ -247,6 +244,8 @@ class DUCUnwrap(Operator):
     bl_label = "Main"
     
     def execute(self, context):
+        
+        time_start = time.time()
         
         obj = context.active_object
         me = obj.data
@@ -271,6 +270,11 @@ class DUCUnwrap(Operator):
         for loop in ob.data.loops :
             ob.data.uv_layers.active.data[loop.index].uv = ob.data.uv_layers.active.data[loop.index].uv + travec
         
+        t4 = time.time() - time_start
+#        print("DUCUnwrap    finished in %.4f sec" % (t4))
+        
+        bpy.context.scene["t4"] = t4
+        
         bpy.ops.object.duc_export('INVOKE_DEFAULT') # Moves to the next step, exporting the UV map.
         
         return {'FINISHED'}
@@ -280,29 +284,27 @@ class DUCExport(Operator):
     """Exports the UV map"""
     bl_idname = "object.duc_export"
     bl_label = "Main"
-        
+    
     def execute(self, context):
         
-        TextureScale = 1
-        ChechboxState = context.scene.my_tool.my_bool # State of the checkbox
+        time_start = time.time()
         
-        if (ChechboxState == True): # Doubles the texture size if the checkbox is activated.
-            TextureScale = 2
-        else:
-            pass
-        
-        hsize = int(bpy.context.scene["hsize"]) * TextureScale
-        vsize = int(bpy.context.scene["vsize"]) * TextureScale
+        hsize = int(bpy.context.scene["hsize"])
+        vsize = int(bpy.context.scene["vsize"])
                 
         # Exports the texture on the same folder as the .csv file.
         expfilepath = bpy.context.scene["DUCFilePath"] # Gets the filepath of the .csv file.
-        expfilepath = expfilepath[:-4] # Removes the last four characters (.csv).
+        expfilepath = expfilepath[:-8] # Removes the last eight characters (.dds.csv).
         expfilepath = expfilepath + '_UV' # Adds _UV to the file name.
 
-        bpy.ops.uv.export_layout(filepath=expfilepath, export_all=True, mode='PNG', size=(hsize, vsize))
+        bpy.ops.uv.export_layout(filepath=expfilepath, export_all=True, mode='SVG', size=(hsize, vsize))
         
-        # Deletes the mesh.
-        bpy.ops.object.delete(use_global=False)
+        # Deletes the object.
+        bpy.data.objects.remove(bpy.data.objects['Plane'], do_unlink=True)
+        
+        # Deletes the meshes.
+        bpy.data.meshes.remove(bpy.data.meshes['Plane'], do_unlink=True)
+        bpy.data.meshes.remove(bpy.data.meshes['UV_Unwrap_PointCloud'], do_unlink=True)
         
         # Removes data so that the .blend file doesn't balloon in size.
         bpy.context.scene["RawData"] = [(0,0,0)]
@@ -312,18 +314,26 @@ class DUCExport(Operator):
         bpy.context.scene["hsize"] = [(0,0,0)]
         bpy.context.scene["vsize"] = [(0,0,0)]
         
-        #self.report({'INFO'}, 'UV Conversion finished.') Commented out, not working.
+        t5 = time.time() - time_start
+#        print("DUCExport    finished in %.4f sec" % (t5))
+#        print("----------------END----------------","\n")
+        
+        bpy.context.scene["t5"] = t5
+        
+        ttotal = 0
+        t_array = ["t1","t2","t3","t4","t5"]
+        y = 0
+        while y < 5:
+            ttotal = ttotal + bpy.context.scene[t_array[y]]
+            y +=1
+        
+        print()
+        print("DCS UV Converter finished in %.1f seconds." % (ttotal))
+        print("File saved to: %s" % (expfilepath),"\n")
+        
+        bpy.context.scene["t5"] = t5
         
         return {'FINISHED'}
-
-# Stores properties in the active scene.
-class MySettings(PropertyGroup):
-
-    my_bool : BoolProperty(
-        name="Enable or Disable",
-        description="Warning: Slows conversion",
-        default = False
-        )
 
 # Adds the UI.
 class LayoutDUCButtons(Panel):
@@ -336,17 +346,12 @@ class LayoutDUCButtons(Panel):
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
-        mytool = scene.my_tool
         
         # Convert button.
         layout.label(text="Select the .csv file to convert")
         row = layout.row()
         row.scale_y = 2.0
         row.operator("object.duc_main")
-        
-        # x2 texture size checkbox.
-        layout.prop(mytool, "my_bool", text="Double texture size (Slower)")
         
 # Registers all of the classes.
 classes = (
@@ -357,7 +362,6 @@ classes = (
     DUCUnwrap,
     DUCExport,
     LayoutDUCButtons,
-    MySettings,
 )
         
 def register():
@@ -365,15 +369,11 @@ def register():
     for cls in classes:
         register_class(cls)
 
-    bpy.types.Scene.my_tool = PointerProperty(type=MySettings)
-
 def unregister():
     from bpy.utils import unregister_class
     for cls in reversed(classes):
         unregister_class(cls)
     
-    del bpy.types.Scene.my_tool
-
 # This allows you to run the script directly from Blender's Text editor
 # to test the add-on without having to install it.
 if __name__ == "__main__":

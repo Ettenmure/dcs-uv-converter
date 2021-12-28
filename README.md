@@ -8,7 +8,7 @@ This Blender Add-on converts UV maps generated on ModelViewer 2 to an image form
 
 DCS 2.7, older versions can't generate the UV map.
 
-Download and install Blender 2.92.0 from https://www.blender.org/download/
+Download and install Blender from https://www.blender.org/download/
 
 Download the latest release of the Add-on from https://github.com/Ettenmure/dcs-uv-converter/releases
 
@@ -46,8 +46,7 @@ On the Properties editor, at the right of the screen, change to the "Scene" tab.
 
 ![Readme1](./images/ReadmeImage1.PNG)
 
-Here you should see an entry called "DCS UV Converter", expand it to reveal the "Convert .csv" button and the "double texture resolution" checkbox.
-Activating the checkbox will double the resolution of the generated UV map but it will also slow down the conversion process.
+Here you should see an entry called "DCS UV Converter", expand it to reveal the "Convert .csv" button.
 
 Click the grey "Convert .csv" button. A new window will open asking you to locate on your hard drive the .csv file that you previously created.
 Select it and press the blue "Import .csv" button.
@@ -55,7 +54,7 @@ Select it and press the blue "Import .csv" button.
 ![Readme2](./images/ReadmeImage2.PNG)
 
 The conversion process has now begun, this can last from seconds to minutes depending on the complexity of the UV map and your computer hardware. 
-Do not exit blender while it's running.
+Do not exit Blender while it's running.
 
 Once it finishes you will be notified on the outliner editor, at the top right of the screen, with a new collection appearing called "Conversion finished".
 
@@ -63,7 +62,7 @@ Once it finishes you will be notified on the outliner editor, at the top right o
 
 The conversion process has now finished, exit Blender.
 
-The generated UV map is an image in .png format that will be located at the same folder as the .csv. Its name is the same as that of the .csv but with "_UV" added at the end.
+The generated UV map is an image in .svg format that will be located at the same folder as the .csv. Its name has "_UV" added at the end.
 
 ## Troubleshooting
 
@@ -71,7 +70,7 @@ The generated UV map is an image in .png format that will be located at the same
 
 - Try a manual installation. Extract the .zip file and move the folder named "DCSUVConverter", which contains "\_\_init\_\_.py", to:
 
-  C:\Users\\%USERNAME%\AppData\Roaming\Blender Foundation\Blender\2.92\scripts\addons
+  C:\Users\\%USERNAME%\AppData\Roaming\Blender Foundation\Blender\2.93\scripts\addons
 
   If you have never installed an Add-on before you might not have the "scripts" or "addons" folders and you will have to create them manually.
 
@@ -83,10 +82,3 @@ The generated UV map is an image in .png format that will be located at the same
 - The Add-on might not have been activated. Confirm that the checkbox to the left of the Add-on name in the Add-ons menus is active.
 Also review the documentation for Blender Add-ons:
 https://docs.blender.org/manual/en/latest/editors/preferences/addons.html
-
-## Planned features
-
-These have not been implemented yet but are planned for later releases:
-
-- Batch conversion
-- Additional image export options
